@@ -1,0 +1,143 @@
+import pandas as pd
+import numpy as np
+import seaborn as sns
+from matplotlib import pyplot as plt
+import regex as re
+from matplotlib.pyplot import figure
+
+sns.set_theme(palette="dark", font="arial", font_scale= 0.7)
+
+def clean_war(row):
+    row = row.replace("'", '').replace('[', '').replace(']', '').replace('\n', '').split(' ')
+    newrow = []
+    if 'вов' in str(row):
+        for i in row:
+            if i.startswith('вов'):
+                if i == 'вов':
+                    newrow .append(i)
+            else:
+                newrow .append(i)
+    else:
+        newrow = row
+    return newrow
+
+
+def clean_nazi(row):
+    row = str(row)
+    row = row.replace("'", '').replace('[', '').replace(']', '').replace('\n', '').replace(',', '').replace('.', '').split(' ')
+    newrow = []
+    if 'национальн' in str(row):
+        for i in row:
+            if i.startswith('национальн'):
+                if i == 'вов':
+                    newrow .append(i)
+            else:
+                newrow .append(i)
+    else:
+        newrow = row
+    newrow2 = []
+    row = newrow
+    if len(re.findall('наци[а-я]', str(row)))>0:
+        x = re.findall('наци[а-я]', str(row))
+        for i in row:
+            if i not in x:
+                newrow2.append(i)
+        newrow = newrow2
+    try:
+        newrow.remove('')
+    except:
+        pass
+    try:
+        newrow.remove('нацией')
+    except:
+        pass
+    return newrow
+
+# read list of all links (aka ids from website)
+list_of_links = pd.read_csv('../list_of_links.csv')
+print(len(np.unique(list_of_links['link'])))
+# read scraped dataset
+df = pd.read_csv('dataset.csv', index_col=False)
+df = df[['id', 'date', 'text', 'ua', 'war']].copy()
+df['len_war']= df['war'].apply(len)
+df['len_ua']= df['ua'].apply(len)
+df['war'][df['len_war']!=2] = df['war'][df['len_war']!=2].apply(clean_war)
+df['cleaned_GPW'] = '[]'
+df['cleaned_GPW'][df['len_war']!=2] = df['war'][df['len_war']!=2].apply(clean_nazi)
+df['len_war']= df['war'].astype(str).apply(len)
+df['len_ua']= df['ua'].astype(str).apply(len)
+df['len_cleaned_GPW'] = df['cleaned_GPW'].astype(str).apply(len)
+df['ua_counts'] = df['len_ua'].apply(lambda row: 1 if row > 2 else 0)
+df['war_counts'] = df['len_war'].apply(lambda row: 1 if row > 2 else 0)
+df['cleaned_GPW_counts'] = df['len_cleaned_GPW'].apply(lambda row: 1 if row > 2 else 0)
+df['lens'] = df['len_war'] + df['len_ua']
+df['text'][df['lens']==4] = ''
+df['link'] = 'kremlin.ru/events/president/news/' + df['id'].astype(str)
+
+df = df[['id', 'link', 'date', 'text', 'ua', 'ua_counts', 'war', 'war_counts', 'cleaned_GPW', 'cleaned_GPW_counts']].copy()
+df['ua'] = df['ua'].astype(str)
+df['war'] = df['war'].astype(str)
+df['cleaned_GPW'] = df['cleaned_GPW'].astype(str)
+df['id'] = df['id'].astype(str)
+list_of_links['link'] = list_of_links['link'].astype(str)
+
+l = list(list_of_links['link'])
+l.extend(list(df['id']))
+
+list_of_links = pd.DataFrame(list(np.unique(l)))
+list_of_links.columns = ['id']
+
+df = df.reset_index(drop=True)
+df = df.drop_duplicates()
+
+df['date'] = pd.to_datetime(df['date'])
+df = df.sort_values(by=['date', 'id'])
+df = df.reset_index(drop=True)
+
+ids = df["id"]
+df2 = df[ids.isin(ids[ids.duplicated()])].sort_values("id")
+
+dates = df2.groupby('id').last().reset_index()['date']
+df2 = df2.groupby('id').first().reset_index()
+
+df2['alternative_date'] = list(dates)
+df = df[~ids.isin(ids[ids.duplicated()])]
+df['alternative_date'] = ''
+df = df.append(df2)
+df['date'] = pd.to_datetime(df['date'])
+df = df.sort_values(by=['date', 'id'])
+
+df['all_counts'] = df['ua_counts'] + df['cleaned_GPW_counts']
+df['all_counts'] = df['all_counts'].apply(lambda row: 1 if row==2 else 0)
+
+# print stats
+print('Sum UA counts:', sum(list(df['ua_counts'])))
+print('Sum GPW counts:', sum(list(df['war_counts'])))
+print('Sum GPW counts cleaned:', sum(list(df['cleaned_GPW_counts'])))
+print('Sum UA+GPW counts cleaned:', sum(list(df['all_counts'])))
+
+df['month'] = df['date'].dt.to_period('M')
+df = df[['month', 'ua_counts', 'all_counts', 'war_counts', 'cleaned_GPW_counts']].copy()
+df['all'] = 1
+df = df.groupby('month').sum().reset_index()
+df = df[1:]
+
+# plot the data
+x_values = df['month'].astype(str)
+y_values = df['all']
+figure(figsize=(20, 20), dpi=300)
+fig = plt.figure()
+ax = plt.axes()
+ax.set_facecolor('#F5F5F5')
+plt.plot(x_values, df['ua_counts']/y_values, label = "Ukraine texts ratio", linestyle=":", color='#505050')
+plt.plot(x_values, df['cleaned_GPW_counts']/y_values, label = "GPW texts ratio", color='#808080', linestyle="solid")
+plt.plot(x_values, df['all_counts']/y_values, label = "GPW and Ukraine texts ratio", linestyle="--", color='#101010')
+ticks = list(df['month'].astype(str))
+plt.xticks([ticks[i] for i in range(len(ticks)) if i % 5 == 0], rotation=45)
+ax.legend()
+plt.title('Number of texts per topic to total number of texts \n for each month from 2014-01 to 2022-10')
+plt.xlabel('Date')
+plt.ylabel("Number of texts per topic to total number")
+plt.show()
+# save to png
+fig.savefig('png_new_graph.png', dpi=300)
