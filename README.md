@@ -1,4 +1,4 @@
-# TextssScraper
+# TextsScraper
 
 Steps to scrape articles from kremlin.ru website:
 
